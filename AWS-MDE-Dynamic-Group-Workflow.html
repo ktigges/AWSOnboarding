@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="author" content="Kevin Tigges">
+  <meta name="description" content="AWS EC2 provisioning, Microsoft Defender for Endpoint tagging, Entra dynamic grouping, and security policy assignment workflow.">
+  <title>AWS MDE Tagging and Policy Workflow</title>
+  <style>
+    :root {
+      --ink: #182026;
+      --muted: #56636d;
+      --line: #c8d0d6;
+      --paper: #ffffff;
+      --canvas: #e8ecef;
+      --aws: #8a4b08;
+      --aws-soft: #fff4e8;
+      --linux: #246b45;
+      --linux-soft: #edf7f1;
+      --windows: #0067a8;
+      --windows-soft: #edf6fb;
+      --defender: #a3262f;
+      --defender-soft: #fbeff0;
+      --entra: #4f3b88;
+      --entra-soft: #f2eff9;
+      --policy: #775900;
+      --policy-soft: #fff8df;
+      --code: #f5f7f8;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(255, 255, 255, .42) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, .42) 1px, transparent 1px),
+        var(--canvas);
+      background-size: 24px 24px;
+      font-family: "Aptos", "Segoe UI", sans-serif;
+      line-height: 1.48;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      justify-content: center;
+      gap: 4px;
+      padding: 9px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, .97);
+    }
+
+    .toolbar a {
+      padding: 7px 9px;
+      color: #2d3941;
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+      text-transform: uppercase;
+    }
+
+    .toolbar a:hover { background: #eef2f4; }
+
+    main {
+      display: grid;
+      gap: 22px;
+      width: min(1160px, calc(100% - 28px));
+      margin: 24px auto 48px;
+    }
+
+    .page {
+      min-height: 720px;
+      padding: 42px 48px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: 0 5px 16px rgba(24, 32, 38, .08);
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    h1, h2 {
+      margin: 0;
+      font-family: Georgia, serif;
+      font-weight: 600;
+      line-height: 1.14;
+    }
+
+    h1 { max-width: 900px; font-size: 42px; }
+    h2 { font-size: 31px; }
+    h3 { margin: 0 0 7px; font-size: 17px; }
+    p { margin: 0; }
+
+    .intro {
+      max-width: 900px;
+      margin: 15px 0 26px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    code {
+      color: #663100;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: .91em;
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      margin: 10px 0 0;
+      padding: 13px 15px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      background: var(--code);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 18px;
+      margin-bottom: 22px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      margin-right: 5px;
+    }
+
+    .legend .aws-marker { background: var(--aws); }
+    .legend .defender-marker { background: var(--defender); }
+    .legend .entra-marker { background: var(--entra); }
+    .legend .policy-marker { background: var(--policy); }
+
+    .swimlane {
+      display: grid;
+      grid-template-columns: 90px repeat(6, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+    }
+
+    .lane-label,
+    .lane-cell {
+      min-height: 100px;
+      padding: 12px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .lane-label {
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .lane-cell {
+      position: relative;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .lane-cell.active::after {
+      content: "";
+      position: absolute;
+      top: 49%;
+      right: -8px;
+      z-index: 2;
+      width: 12px;
+      height: 12px;
+      border-top: 2px solid #78848c;
+      border-right: 2px solid #78848c;
+      background: var(--paper);
+      transform: rotate(45deg);
+    }
+
+    .lane-cell strong {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--ink);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .aws-bg { background: var(--aws); }
+    .defender-bg { background: var(--defender); }
+    .entra-bg { background: var(--entra); }
+    .policy-bg { background: var(--policy); }
+    .aws-soft { background: var(--aws-soft); }
+    .defender-soft { background: var(--defender-soft); }
+    .entra-soft { background: var(--entra-soft); }
+    .policy-soft { background: var(--policy-soft); }
+
+    .distinction {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-top: 24px;
+    }
+
+    .distinction > div {
+      padding: 17px;
+      border-top: 4px solid var(--defender);
+      background: var(--defender-soft);
+    }
+
+    .distinction > div + div {
+      border-color: var(--entra);
+      background: var(--entra-soft);
+    }
+
+    .distinction span { color: var(--muted); font-size: 14px; }
+
+    .build-list {
+      display: grid;
+      gap: 0;
+      margin-top: 22px;
+      counter-reset: build;
+      border-top: 1px solid var(--line);
+    }
+
+    .build-item {
+      display: grid;
+      grid-template-columns: 48px 180px minmax(0, 1fr) 210px;
+      gap: 14px;
+      padding: 15px 0;
+      border-bottom: 1px solid var(--line);
+      counter-increment: build;
+    }
+
+    .build-item::before {
+      content: counter(build, decimal-leading-zero);
+      color: var(--defender);
+      font-family: Georgia, serif;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .build-item strong { font-size: 14px; }
+    .build-item p, .build-item .where { color: var(--muted); font-size: 13px; }
+    .build-item .where { padding-left: 12px; border-left: 2px solid var(--line); }
+
+    .phase-list { display: grid; gap: 0; margin-top: 22px; border-top: 1px solid var(--line); }
+    .phase { display: grid; grid-template-columns: 88px 170px minmax(0, 1fr) 210px; gap: 16px; padding: 17px 0; border-bottom: 1px solid var(--line); }
+    .phase-time { color: var(--defender); font-family: Georgia, serif; font-size: 18px; font-weight: 700; }
+    .phase strong { font-size: 14px; }
+    .phase p, .phase aside { color: var(--muted); font-size: 13px; }
+    .phase aside { padding-left: 12px; border-left: 2px solid var(--line); }
+
+    .callout { margin-top: 20px; padding: 15px 17px; border-left: 5px solid var(--windows); background: var(--windows-soft); color: var(--muted); font-size: 14px; }
+    .callout strong { color: var(--ink); }
+
+    .config-grid, .resource-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 22px; }
+    .config-block, .resource-block { border-top: 5px solid var(--aws); background: var(--aws-soft); }
+    .config-block.azure, .resource-block.azure { border-color: var(--entra); background: var(--entra-soft); }
+    .config-block header, .resource-block header { padding: 15px 17px; border-bottom: 1px solid var(--line); }
+    .config-block table, .resource-block ul { width: 100%; margin: 0; }
+    .config-block table { border-collapse: collapse; font-size: 12px; }
+    .config-block td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .config-block tr:last-child td { border-bottom: 0; }
+    .config-block td:first-child { width: 43%; font-weight: 700; }
+    .resource-block ul { padding: 12px 17px 14px 35px; }
+    .resource-block li { margin: 7px 0; color: var(--muted); font-size: 13px; }
+    .kind { display: inline-block; margin-left: 5px; padding: 2px 5px; border: 1px solid var(--line); color: var(--muted); background: #fff; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+
+    .columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .platform {
+      border-top: 5px solid var(--linux);
+      background: var(--linux-soft);
+    }
+
+    .platform.windows {
+      border-color: var(--windows);
+      background: var(--windows-soft);
+    }
+
+    .platform header,
+    .platform .platform-body { padding: 17px 19px; }
+    .platform header { border-bottom: 1px solid var(--line); }
+
+    .platform ol, .platform ul, .function-detail ul, .considerations ul {
+      margin: 9px 0 0;
+      padding-left: 20px;
+    }
+
+    .platform li, .function-detail li, .considerations li { margin: 6px 0; }
+    .platform p, .platform li { font-size: 14px; }
+
+    .exclusion-table,
+    .config-table {
+      width: 100%;
+      margin-top: 22px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .exclusion-table th,
+    .exclusion-table td,
+    .config-table th,
+    .config-table td {
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .exclusion-table th,
+    .config-table th { background: #eef2f4; }
+
+    .function-flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 24px;
+    }
+
+    .function-step {
+      position: relative;
+      min-height: 162px;
+      padding: 14px;
+      border-top: 4px solid var(--defender);
+      background: var(--defender-soft);
+    }
+
+    .function-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -13px;
+      width: 8px;
+      height: 8px;
+      border-top: 2px solid #76828a;
+      border-right: 2px solid #76828a;
+      transform: rotate(45deg);
+    }
+
+    .function-step b {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--defender);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .function-step strong { display: block; margin-bottom: 6px; font-size: 14px; }
+    .function-step span { color: var(--muted); font-size: 12px; }
+
+    .function-detail {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 18px;
+      margin-top: 22px;
+    }
+
+    .function-detail > div { padding: 16px; border: 1px solid var(--line); }
+    .function-detail p, .function-detail li { color: var(--muted); font-size: 13px; }
+
+    .portal-path {
+      margin: 8px 0 12px;
+      padding: 9px 12px;
+      border-left: 4px solid var(--entra);
+      background: var(--entra-soft);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .scope-note {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .policy-rules { margin-top: 24px; }
+
+    .assignment-flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 20px;
+      margin-top: 22px;
+    }
+
+    .assignment-step {
+      position: relative;
+      min-height: 150px;
+      padding: 15px;
+      border: 1px solid var(--line);
+    }
+
+    .assignment-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -14px;
+      width: 8px;
+      height: 8px;
+      border-top: 2px solid #76828a;
+      border-right: 2px solid #76828a;
+      background: var(--paper);
+      transform: rotate(45deg);
+    }
+
+    .assignment-step strong { display: block; margin-bottom: 7px; font-size: 14px; }
+    .assignment-step span { color: var(--muted); font-size: 12px; }
+
+    .considerations {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px 28px;
+      margin-top: 22px;
+    }
+
+    .considerations section {
+      padding-top: 13px;
+      border-top: 3px solid var(--policy);
+    }
+
+    .considerations p, .considerations li { color: var(--muted); font-size: 13px; }
+
+    .page-nav {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 30px;
+      padding-top: 13px;
+      border-top: 1px solid var(--line);
+    }
+
+    .page-nav a { color: #34414a; font-size: 13px; text-decoration: none; }
+
+    @media (max-width: 900px) {
+      body { overflow-x: hidden; }
+      main { width: calc(100vw - 28px); }
+      .swimlane { grid-template-columns: 76px 1fr; }
+      .lane-cell { min-height: 0; }
+      .lane-cell:empty { display: none; }
+      .lane-cell.active::after { display: none; }
+      .build-item { grid-template-columns: 42px 1fr; }
+      .build-item p, .build-item .where { grid-column: 2; }
+      .build-item .where { padding-left: 0; border-left: 0; }
+      .columns, .distinction, .function-detail, .considerations,
+      .config-grid, .resource-grid { grid-template-columns: 1fr; }
+      .phase { grid-template-columns: 82px minmax(0, 1fr); }
+      .phase p, .phase aside { grid-column: 2; }
+      .phase aside { padding-left: 0; border-left: 0; }
+      .config-block, .resource-block, .page { min-width: 0; }
+      .config-block table { table-layout: fixed; }
+      .config-block td,
+      .config-table th, .config-table td,
+      .exclusion-table th, .exclusion-table td { overflow-wrap: anywhere; }
+      .config-table, .exclusion-table { table-layout: fixed; }
+      .function-flow, .assignment-flow { grid-template-columns: 1fr; }
+      .function-step, .assignment-step { min-height: 0; }
+      .function-step:not(:last-child)::after,
+      .assignment-step:not(:last-child)::after { display: none; }
+      .page { min-height: 0; padding: 28px 23px; }
+      h1 { font-size: 34px; }
+      .toolbar { justify-content: flex-start; width: 100%; max-width: 100vw; overflow-x: auto; }
+      .toolbar a { flex: 0 0 auto; white-space: nowrap; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .toolbar, .page-nav { display: none; }
+      main { display: block; width: 100%; margin: 0; }
+      .page { min-height: 0; padding: .45in; border: 0; box-shadow: none; break-after: page; }
+      .page:last-child { break-after: auto; }
+    }
+
+    /* Simple slide layout */
+    body { background: #eef1f3; font-family: "Aptos", "Segoe UI", sans-serif; }
+    .toolbar { box-shadow: none; }
+    main { width: min(1200px, calc(100% - 32px)); gap: 28px; }
+    .page {
+      position: relative;
+      min-height: 0;
+      aspect-ratio: 16 / 9;
+      padding: 46px 56px 54px;
+      border: 1px solid #bcc5cb;
+      border-top: 7px solid #3b596d;
+      box-shadow: none;
+      overflow: hidden;
+    }
+    .page::after {
+      content: attr(data-slide);
+      position: absolute;
+      right: 28px;
+      bottom: 20px;
+      color: #71808a;
+      font-size: 12px;
+    }
+    h1, h2 { font-family: Georgia, serif; }
+    h1 { font-size: 38px; }
+    h2 { font-size: 30px; }
+    .slide-lead { max-width: 950px; margin: 12px 0 22px; color: var(--muted); font-size: 17px; }
+    .plain-points { margin: 20px 0 0; padding-left: 24px; max-width: 1020px; }
+    .plain-points li { margin: 12px 0; padding-left: 5px; font-size: 17px; }
+    .plain-points li::marker { color: #3b596d; }
+    .plain-points strong { color: #22313a; }
+    .slide-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 42px; margin-top: 20px; }
+    .slide-columns > section { min-width: 0; }
+    .slide-columns h3 { padding-bottom: 7px; border-bottom: 2px solid #9aa8b1; font-size: 18px; }
+    .slide-columns ul { margin: 12px 0 0; padding-left: 21px; }
+    .slide-columns li { margin: 9px 0; font-size: 15px; }
+    .simple-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 28px; counter-reset: step; }
+    .simple-step { padding: 15px; border: 1px solid #b9c3c9; counter-increment: step; }
+    .simple-step::before { content: counter(step); display: block; margin-bottom: 8px; color: #526b7b; font-size: 22px; font-weight: 700; }
+    .simple-step strong { display: block; margin-bottom: 7px; font-size: 15px; }
+    .simple-step span { color: var(--muted); font-size: 13px; }
+    .key-line { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); color: #334752; font-size: 15px; font-weight: 700; }
+    .compact-table { width: 100%; margin-top: 20px; border-collapse: collapse; font-size: 14px; }
+    .compact-table th, .compact-table td { padding: 9px 11px; border: 1px solid #c5cdd2; text-align: left; vertical-align: top; }
+    .compact-table th { background: #eef1f3; }
+    .page-nav { display: none; }
+
+    @media (max-width: 900px) {
+      .page { aspect-ratio: auto; min-height: calc(100vh - 72px); padding: 30px 25px 46px; overflow: visible; }
+      .slide-columns, .simple-steps { grid-template-columns: 1fr; gap: 16px; }
+      .plain-points li { font-size: 15px; }
+      .simple-step { min-height: 0; }
+      .compact-table { table-layout: fixed; }
+      .compact-table th, .compact-table td { overflow-wrap: anywhere; }
+    }
+
+    @media print {
+      @page { size: landscape; margin: 0; }
+      .page { width: 100%; aspect-ratio: 16 / 9; padding: .45in .55in; border: 0; border-top: 7px solid #3b596d; overflow: hidden; }
+    }
+
+    /* Single-slide viewer */
+    body { overflow: hidden; }
+    .slide-nav {
+      position: fixed;
+      inset: 0 auto 0 0;
+      z-index: 20;
+      width: 220px;
+      padding: 24px 14px;
+      border-right: 1px solid #b9c2c8;
+      background: #f7f8f9;
+    }
+    .slide-nav strong { display: block; margin: 0 8px 18px; color: #273943; font-size: 14px; }
+    .slide-nav button {
+      display: block;
+      width: 100%;
+      margin: 2px 0;
+      padding: 11px 10px;
+      border: 0;
+      border-left: 3px solid transparent;
+      color: #53616a;
+      background: transparent;
+      font: inherit;
+      font-size: 13px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .slide-nav button:hover { background: #e9edef; }
+    .slide-nav button[aria-current="page"] { border-left-color: #3b596d; color: #17242b; background: #e3e9ec; font-weight: 700; }
+    .slide-nav small { display: block; margin: 18px 8px 0; color: #74818a; font-size: 11px; }
+    main.slide-viewer {
+      display: block;
+      width: auto;
+      height: 100vh;
+      margin: 0 0 0 220px;
+      padding: 24px;
+      overflow: hidden;
+    }
+    .slide-viewer .page {
+      display: none;
+      width: min(1200px, 100%);
+      max-height: calc(100vh - 48px);
+      margin: 0 auto;
+    }
+    .slide-viewer .page.active { display: block; }
+    .slide-controls { position: absolute; right: 54px; bottom: 26px; z-index: 2; display: flex; gap: 8px; }
+    .slide-controls button { padding: 7px 11px; border: 1px solid #aeb8be; color: #344650; background: #fff; cursor: pointer; }
+    .slide-controls button:disabled { color: #a1a9ae; cursor: default; }
+    .query-example { margin-top: 18px; font-size: 12px; }
+    .diagram-page { padding: 18px 24px 42px; }
+    .diagram-image {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      cursor: zoom-in;
+    }
+    .diagram-lightbox {
+      width: 100vw;
+      max-width: none;
+      height: 100vh;
+      max-height: none;
+      margin: 0;
+      padding: 24px;
+      border: 0;
+      background: #fff;
+    }
+    .diagram-lightbox::backdrop { background: rgba(24, 32, 38, .82); }
+    .diagram-lightbox img {
+      display: block;
+      width: auto;
+      max-width: none;
+      height: auto;
+      max-height: none;
+      margin: 0 auto;
+    }
+    .diagram-lightbox button {
+      position: fixed;
+      top: 14px;
+      right: 14px;
+      z-index: 1;
+      width: 38px;
+      height: 38px;
+      border: 1px solid #8d989f;
+      color: #253640;
+      background: #fff;
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    @media (max-width: 900px) {
+      body { overflow: hidden; }
+      .slide-nav { width: 142px; padding: 14px 8px; }
+      .slide-nav strong { margin: 0 6px 12px; font-size: 12px; }
+      .slide-nav button { padding: 8px 7px; font-size: 11px; }
+      .slide-nav small { display: none; }
+      main.slide-viewer { height: 100vh; margin-left: 142px; padding: 10px; overflow-y: auto; }
+      .slide-viewer .page { min-height: calc(100vh - 20px); max-height: none; }
+      .slide-controls { right: 24px; bottom: 14px; }
+    }
+
+    @media print {
+      body { overflow: visible; }
+      .slide-nav, .slide-controls { display: none; }
+      main.slide-viewer { display: block; width: 100%; height: auto; margin: 0; padding: 0; overflow: visible; }
+      .slide-viewer .page, .slide-viewer .page.active { display: block; max-height: none; margin: 0; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="slide-nav" aria-label="Slide navigator">
+    <strong>AWS MDE workflow</strong>
+    <button type="button" data-slide-target="problem">1. Problem</button>
+    <button type="button" data-slide-target="flow">2. Solution workflow</button>
+    <button type="button" data-slide-target="aws">3. Requirements</button>
+    <button type="button" data-slide-target="platforms">4. Platform config</button>
+    <button type="button" data-slide-target="function">5. Tag worker</button>
+    <button type="button" data-slide-target="timing">6. Timing steps</button>
+    <button type="button" data-slide-target="policy">7. Policy assignment</button>
+    <button type="button" data-slide-target="diagram">8. Decision tree</button>
+    <small>Use the navigator or arrow keys.</small>
+  </nav>
+
+  <main class="slide-viewer">
+    <section class="page active" id="problem" data-slide="1 / 8">
+      <p class="eyebrow">Problem</p>
+      <h1>How do we target AWS servers with Microsoft security policy?</h1>
+      <ul class="plain-points">
+        <li>Microsoft Entra dynamic groups can use properties stored on an Entra device record.</li>
+        <li>Azure devices already have useful properties in Entra that can be used for automatic grouping.</li>
+        <li>AWS servers can be onboarded to Microsoft Defender, but Entra does not know their AWS account or AWS platform label.</li>
+        <li>The MDE device tag is visible in Defender, but an Entra dynamic group cannot evaluate it directly.</li>
+        <li><strong>Result:</strong> Entra needs an AWS-specific value on the device record before it can place the server in the correct policy group.</li>
+      </ul>
+    </section>
+
+    <section class="page" id="flow" data-slide="2 / 8">
+      <p class="eyebrow">End-to-end steps</p>
+      <h2>Solution workflow</h2>
+      <div class="simple-steps">
+        <div class="simple-step"><strong>Tag on Provisioning</strong><span>AWS provisioning writes the account-and-platform tag into the device's MDE configuration.</span></div>
+        <div class="simple-step"><strong>Report to MDE</strong><span>The tag is ingested into MDE when onboarded.</span></div>
+        <div class="simple-step"><strong>Map Tag to Entra Attribute</strong><span>The scheduled Function finds the device and fills <code>extensionAttribute1</code>.</span></div>
+        <div class="simple-step"><strong>Dynamic Group Evaluation</strong><span>Entra dynamic membership matches the extension attribute value.</span></div>
+        <div class="simple-step"><strong>Apply policy</strong><span>Intune targets the resulting group through MDE Security Settings Management.</span></div>
+      </div>
+      <p class="key-line">The values shown are only the tags selected for this test. Use any naming scheme that fits your environment, and configure multiple allowed tag values and dynamic groups for different device populations or policy requirements.</p>
+    </section>
+
+    <section class="page" id="aws" data-slide="3 / 8">
+      <p class="eyebrow">AWS provisioning</p>
+      <h2>Requirements</h2>
+      <div class="slide-columns">
+        <section><h3>Inputs</h3><ul>
+          <li>AWS account and region access</li>
+          <li>MDE onboarding packages for Linux and Windows</li>
+          <li>Un-onboarded Linux AMI with MDE installed</li>
+          <li>Windows administrator RSA public key</li>
+          <li>Platform suffixes: <code>linux-lab</code> and <code>windows-lab</code></li>
+        </ul></section>
+        <section><h3>Provisioning performs</h3><ul>
+          <li>Creates EC2, S3, IAM, security group, and SSM resources</li>
+          <li>Builds the tag from AWS account ID plus platform suffix</li>
+          <li>Writes the tag into local MDE configuration</li>
+          <li>Applies the local Defender baseline and bootstrap exclusion</li>
+          <li>Onboards the server to MDE and verifies service health</li>
+        </ul></section>
+      </div>
+      <p class="key-line">Tags used in this lab build: <code>&lt;aws-account-id&gt;-linux-lab</code> and <code>&lt;aws-account-id&gt;-windows-lab</code></p>
+    </section>
+
+    <section class="page" id="platforms" data-slide="4 / 8">
+      <p class="eyebrow">Platform configuration</p>
+      <h2>Windows and Linux Test Values</h2>
+      <table class="compact-table">
+        <thead><tr><th>Configuration</th><th>Linux</th><th>Windows</th></tr></thead>
+        <tbody>
+          <tr><td>Tag suffix</td><td><code>linux-lab</code></td><td><code>windows-lab</code></td></tr>
+          <tr><td>Final tag</td><td><code>&lt;aws-account-id&gt;-linux-lab</code></td><td><code>&lt;aws-account-id&gt;-windows-lab</code></td></tr>
+          <tr><td>Local tag location</td><td><code>edr.tags</code> in <code>mdatp_managed.json</code></td><td><code>DeviceTagging\Group</code> registry value</td></tr>
+          <tr><td>Protection</td><td>Real-time, behavior, archive, cloud, samples, and PUA settings</td><td>Real-time, behavior, archive, cloud, samples, PUA, and signature settings</td></tr>
+          <tr><td>Local exclusion</td><td><code>/opt/managed/default-exclude</code></td><td><code>C:\Managed\default-exclude</code></td></tr>
+          <tr><td>Service verification</td><td><code>mdatp</code> and organization ID</td><td><code>Sense</code>, <code>WinDefend</code>, and onboarding state</td></tr>
+          <tr><td>Tag publication</td><td>Restart <code>mdatp</code></td><td>One reboot for a new tag value</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="page" id="function" data-slide="5 / 8">
+      <p class="eyebrow">Middleware</p>
+      <h2>Tag worker</h2>
+      <ul class="plain-points">
+        <li>Runs every five minutes in this demo; the schedule is configurable.</li>
+        <li>Queries MDE Advanced Hunting for the latest record for every Linux and Windows Server endpoint.</li>
+        <li>MDE does not provide an “AWS machine” category in this query. The worker identifies AWS devices by matching <code>RegistryDeviceTag</code> against the configured allow-list.</li>
+        <li>Matches the MDE device to one Entra device, preferably by <code>AadDeviceId</code>.</li>
+        <li>Writes the MDE tag to <code>extensionAttribute1</code> when the field is blank or does not match.</li>
+        <li>Does nothing when the correct value is already present or the device match is uncertain.</li>
+      </ul>
+      <pre class="query-example"><code>DeviceInfo
+| where OSPlatform contains "Linux" or OSPlatform startswith "WindowsServer"
+| summarize arg_max(Timestamp, *) by DeviceId
+| project DeviceName, AadDeviceId, OSPlatform, RegistryDeviceTag
+
+Worker filter example:
+RegistryDeviceTag in ("&lt;aws-account-id&gt;-linux-lab", "&lt;aws-account-id&gt;-windows-lab")</code></pre>
+    </section>
+
+    <section class="page" id="timing" data-slide="6 / 8">
+      <p class="eyebrow">Timing</p>
+      <h2>Timing steps</h2>
+      <ul class="plain-points">
+        <li><strong>Device setup:</strong> SSM writes the local tag and completes MDE onboarding.</li>
+        <li><strong>MDE reporting:</strong> the device must send a current record containing the tag.</li>
+        <li><strong>Function schedule:</strong> the next job runs within the five-minute interval after MDE has the tag.</li>
+        <li><strong>Group evaluation:</strong> Entra processes the updated <code>extensionAttribute1</code>.</li>
+        <li><strong>Policy processing:</strong> Intune evaluates the assignment and the device receives the policy through MDE.</li>
+      </ul>
+      <p class="key-line">Each service processes its step independently. Windows may also complete one reboot before its tag is reported.</p>
+    </section>
+
+    <section class="page" id="policy" data-slide="7 / 8">
+      <p class="eyebrow">Policy assignment</p>
+      <h2>Attach policy to the Entra dynamic groups</h2>
+      <div class="slide-columns">
+        <section><h3>Entra group rules</h3><ul>
+          <li>Linux: <code>device.extensionAttribute1 -eq "&lt;aws-account-id&gt;-linux-lab"</code></li>
+          <li>Windows: <code>device.extensionAttribute1 -eq "&lt;aws-account-id&gt;-windows-lab"</code></li>
+          <li>Use Security groups with Dynamic Device membership.</li>
+        </ul></section>
+        <section><h3>Policy setup</h3><ul>
+          <li>Enable MDE Security Settings Management for Linux and Windows Server.</li>
+          <li>Enable MDE enforcement of endpoint security configurations in Intune.</li>
+          <li>Create the appropriate Linux or Windows endpoint security policy.</li>
+          <li>Assign each policy to its corresponding Entra dynamic group.</li>
+        </ul></section>
+      </div>
+      <p class="key-line">Verify in order: local tag → MDE record → Entra attribute → dynamic group → policy status → effective device settings.</p>
+    </section>
+
+    <section class="page diagram-page" id="diagram" data-slide="8 / 8">
+      <img class="diagram-image" id="diagram-zoom-trigger" src="AWS-MDE-Provisioning-Flow.drawio.png" alt="AWS EC2 provisioning decision and flow diagram for Microsoft Defender for Endpoint and Entra dynamic groups" role="button" tabindex="0" aria-label="Enlarge AWS MDE provisioning diagram">
+    </section>
+
+    <div class="slide-controls" aria-label="Slide controls">
+      <button type="button" id="previous-slide" aria-label="Previous slide">Previous</button>
+      <button type="button" id="next-slide" aria-label="Next slide">Next</button>
+    </div>
+  </main>
+  <dialog class="diagram-lightbox" id="diagram-lightbox" aria-label="Enlarged AWS MDE provisioning diagram">
+    <button type="button" id="diagram-lightbox-close" aria-label="Close enlarged diagram">&times;</button>
+    <img src="AWS-MDE-Provisioning-Flow.drawio.png" alt="AWS EC2 provisioning decision and flow diagram for Microsoft Defender for Endpoint and Entra dynamic groups">
+  </dialog>
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide-viewer .page'));
+    const navigationButtons = Array.from(document.querySelectorAll('[data-slide-target]'));
+    const previousButton = document.getElementById('previous-slide');
+    const nextButton = document.getElementById('next-slide');
+    const diagramZoomTrigger = document.getElementById('diagram-zoom-trigger');
+    const diagramLightbox = document.getElementById('diagram-lightbox');
+    const diagramLightboxClose = document.getElementById('diagram-lightbox-close');
+    let currentSlide = Math.max(0, slides.findIndex((slide) => slide.id === location.hash.slice(1)));
+
+    function showSlide(index, updateHash = true) {
+      currentSlide = Math.max(0, Math.min(index, slides.length - 1));
+      slides.forEach((slide, slideIndex) => slide.classList.toggle('active', slideIndex === currentSlide));
+      navigationButtons.forEach((button, buttonIndex) => {
+        if (buttonIndex === currentSlide) button.setAttribute('aria-current', 'page');
+        else button.removeAttribute('aria-current');
+      });
+      previousButton.disabled = currentSlide === 0;
+      nextButton.disabled = currentSlide === slides.length - 1;
+      if (updateHash) history.replaceState(null, '', `#${slides[currentSlide].id}`);
+    }
+
+    navigationButtons.forEach((button, index) => button.addEventListener('click', () => showSlide(index)));
+    previousButton.addEventListener('click', () => showSlide(currentSlide - 1));
+    nextButton.addEventListener('click', () => showSlide(currentSlide + 1));
+    diagramZoomTrigger.addEventListener('click', () => diagramLightbox.showModal());
+    diagramZoomTrigger.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        diagramLightbox.showModal();
+      }
+    });
+    diagramLightboxClose.addEventListener('click', () => diagramLightbox.close());
+    diagramLightbox.addEventListener('click', (event) => {
+      if (event.target === diagramLightbox) diagramLightbox.close();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (diagramLightbox.open) return;
+      if (event.key === 'ArrowLeft') showSlide(currentSlide - 1);
+      if (event.key === 'ArrowRight') showSlide(currentSlide + 1);
+    });
+    showSlide(currentSlide, false);
+  </script>
+</body>
+</html>

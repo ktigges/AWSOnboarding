@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Render managed MDE config before service start, then onboard",
+  "parameters": {
+    "MdeDeviceTag": {
+      "type": "String",
+      "description": "Validated MDE GROUP tag",
+      "interpolationType": "ENV_VAR"
+    },
+    "DeriveAtBoot": {
+      "type": "String",
+      "allowedValues": ["true", "false"],
+      "interpolationType": "ENV_VAR"
+    },
+    "TagSuffix": {
+      "type": "String",
+      "interpolationType": "ENV_VAR"
+    },
+    "OnboardingS3Uri": {
+      "type": "String",
+      "interpolationType": "ENV_VAR"
+    },
+    "ManagedProfileS3Uri": {
+      "type": "String",
+      "interpolationType": "ENV_VAR"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "configureAndOnboard",
+      "inputs": {
+        "timeoutSeconds": "900",
+        "runCommand": [
+          "set -euo pipefail",
+          "exec > >(tee -a /var/log/mde-lab-bootstrap.log) 2>&1",
+          "MDE_DEVICE_TAG=\"$SSM_MdeDeviceTag\"",
+          "if [ \"$SSM_DeriveAtBoot\" = 'true' ]; then TOKEN=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' http://169.254.169.254/latest/api/token); ACCOUNT_ID=$(curl -fsS -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/dynamic/instance-identity/document | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"accountId\"])'); SUFFIX=$(curl -fsS -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/tags/instance/MdeTagSuffix); MDE_DEVICE_TAG=\"${ACCOUNT_ID}-${SUFFIX}\"; fi",
+          "export MDE_DEVICE_TAG",
+          "install -d -m 0755 /opt/lab",
+          "aws s3 cp \"$SSM_ManagedProfileS3Uri\" /opt/lab/mdatp_managed.json.tmpl --only-show-errors",
+          "python3 - <<'PY'\nimport json, os, pathlib\ntag = os.environ['MDE_DEVICE_TAG']\nif not tag.strip() or len(tag) > 200 or any(ch in tag for ch in ',()'):\n    raise SystemExit('invalid MDE device tag')\ntemplate = pathlib.Path('/opt/lab/mdatp_managed.json.tmpl').read_text()\nrendered = template.replace('__MDE_DEVICE_TAG_JSON__', json.dumps(tag))\npathlib.Path('/tmp/mdatp_managed.json').write_text(rendered)\nPY",
+          "python3 -m json.tool /tmp/mdatp_managed.json >/dev/null",
+          "install -d -m 0755 /etc/opt/microsoft/mdatp/managed /opt/managed/default-exclude /opt/managed/policy-exclude1 /opt/managed/policy-exclude2",
+          "install -o root -g root -m 0644 /tmp/mdatp_managed.json /etc/opt/microsoft/mdatp/managed/mdatp_managed.json",
+          "ORG_ID=$(mdatp health --field org_id 2>&1 || true); if printf '%s' \"$ORG_ID\" | grep -Eiq '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'; then echo 'MDE is already onboarded; skipping onboarding script'; else aws s3 cp \"$SSM_OnboardingS3Uri\" /opt/lab/MicrosoftDefenderATPOnboardingLinuxServer.py --only-show-errors; chmod 0700 /opt/lab/MicrosoftDefenderATPOnboardingLinuxServer.py; python3 /opt/lab/MicrosoftDefenderATPOnboardingLinuxServer.py; fi",
+          "systemctl enable mdatp",
+          "systemctl restart mdatp",
+          "rm -f /opt/lab/MicrosoftDefenderATPOnboardingLinuxServer.py /tmp/mdatp_managed.json",
+          "test -n \"$(mdatp health --field org_id | tr -d '[:space:]')\""
+        ]
+      }
+    }
+  ]
+}

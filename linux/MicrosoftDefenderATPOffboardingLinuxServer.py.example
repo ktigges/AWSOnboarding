@@ -1,0 +1,3 @@
+# Download the Linux offboarding package from the Microsoft Defender portal and
+# save it locally as MicrosoftDefenderATPOffboardingLinuxServer.py.
+# The downloaded tenant-specific package is excluded from Git.

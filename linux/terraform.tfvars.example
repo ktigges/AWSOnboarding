@@ -1,0 +1,2 @@
+ec2_instance_name = "mde-linux-lab"
+mde_device_tag    = "mde-lab-test"

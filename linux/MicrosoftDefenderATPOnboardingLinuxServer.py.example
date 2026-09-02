@@ -1,0 +1,3 @@
+# Download the Linux onboarding package from the Microsoft Defender portal and
+# save it locally as MicrosoftDefenderATPOnboardingLinuxServer.py.
+# The downloaded tenant-specific package is excluded from Git.

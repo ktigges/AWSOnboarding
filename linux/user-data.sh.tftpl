@@ -1,0 +1,63 @@
+#!/bin/bash
+set -euo pipefail
+exec > >(tee -a /var/log/mde-lab-bootstrap.log) 2>&1
+
+MDE_DEVICE_TAG=${mde_device_tag}
+DERIVE_AT_BOOT=${derive_at_boot}
+MDE_DEVICE_TAG_SUFFIX=${mde_device_tag_suffix}
+ONBOARDING_S3_URI=${onboarding_s3_uri}
+MANAGED_PROFILE_S3_URI=${managed_profile_s3_uri}
+
+if [ "$DERIVE_AT_BOOT" = "true" ]; then
+  TOKEN=$(curl -fsS -X PUT \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
+    http://169.254.169.254/latest/api/token)
+  ACCOUNT_ID=$(curl -fsS \
+    -H "X-aws-ec2-metadata-token: $TOKEN" \
+    http://169.254.169.254/latest/dynamic/instance-identity/document \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["accountId"])')
+  MDE_DEVICE_TAG_SUFFIX=$(curl -fsS \
+    -H "X-aws-ec2-metadata-token: $TOKEN" \
+    http://169.254.169.254/latest/meta-data/tags/instance/MdeTagSuffix)
+  MDE_DEVICE_TAG="$${ACCOUNT_ID}-$${MDE_DEVICE_TAG_SUFFIX}"
+fi
+export MDE_DEVICE_TAG
+
+aws s3 cp "$MANAGED_PROFILE_S3_URI" \
+  /opt/lab/mdatp_managed.json.tmpl \
+  --only-show-errors
+
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+tag = os.environ["MDE_DEVICE_TAG"]
+if not tag.strip() or len(tag) > 200 or any(char in tag for char in ",()"):
+    raise SystemExit("invalid MDE device tag")
+template = Path("/opt/lab/mdatp_managed.json.tmpl").read_text()
+Path("/tmp/mdatp_managed.json").write_text(
+    template.replace("__MDE_DEVICE_TAG_JSON__", json.dumps(tag))
+)
+PY
+
+python3 -m json.tool /tmp/mdatp_managed.json >/dev/null
+install -d -m 0755 \
+  /etc/opt/microsoft/mdatp/managed \
+  /opt/managed/default-exclude \
+  /opt/managed/policy-exclude1 \
+  /opt/managed/policy-exclude2
+install -o root -g root -m 0644 \
+  /tmp/mdatp_managed.json \
+  /etc/opt/microsoft/mdatp/managed/mdatp_managed.json
+
+aws s3 cp "$ONBOARDING_S3_URI" \
+  /opt/lab/MicrosoftDefenderATPOnboardingLinuxServer.py \
+  --only-show-errors
+chmod 0700 /opt/lab/MicrosoftDefenderATPOnboardingLinuxServer.py
+systemctl enable mdatp
+python3 /opt/lab/MicrosoftDefenderATPOnboardingLinuxServer.py
+systemctl enable --now mdatp
+rm -f /opt/lab/MicrosoftDefenderATPOnboardingLinuxServer.py \
+  /tmp/mdatp_managed.json
+test -n "$(mdatp health --field org_id | tr -d '[:space:]')"

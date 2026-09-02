@@ -1,0 +1,49 @@
+# macOS and Python
+.DS_Store
+.venv/
+**/__pycache__/
+*.py[cod]
+
+# Terraform working data and live configuration
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+**/tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+**/terraform.tfvars
+!**/terraform.tfvars.example
+!**/terraform-derived.tfvars.example
+
+# Local environment and application settings
+lab.env.file
+**/lab.env.file
+**/.ami-state.env
+working-variables.txt
+**/local.settings.json
+!**/local.settings.json.example
+
+# Private keys and local access material
+**/.ssh/
+**/.keys/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Generated deployment artifacts and logs
+**/function-app.zip
+*.log
+
+# Tenant-specific Microsoft Defender packages
+linux/MicrosoftDefenderATPOnboardingLinuxServer.py
+linux/MicrosoftDefenderATPOffboardingLinuxServer*.py
+windows/WindowsDefenderATPOnboardingScript.cmd
+!linux/MicrosoftDefenderATPOnboardingLinuxServer.py.example
+!linux/MicrosoftDefenderATPOffboardingLinuxServer.py.example
+!windows/WindowsDefenderATPOnboardingScript.cmd.example

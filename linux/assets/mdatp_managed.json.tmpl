@@ -1,0 +1,42 @@
+{
+  "antivirusEngine": {
+    "enforcementLevel": "real_time",
+    "behaviorMonitoring": "enabled",
+    "scanAfterDefinitionUpdate": true,
+    "scanArchives": true,
+    "threatTypeSettings": [
+      {
+        "key": "potentially_unwanted_application",
+        "value": "block"
+      },
+      {
+        "key": "archive_bomb",
+        "value": "audit"
+      }
+    ]
+  },
+  "cloudService": {
+    "enabled": true,
+    "automaticDefinitionUpdateEnabled": true,
+    "automaticSampleSubmissionConsent": "safe"
+  },
+  "edr": {
+    "tags": [
+      {
+        "key": "GROUP",
+        "value": __MDE_DEVICE_TAG_JSON__
+      }
+    ]
+  },
+  "exclusionSettings": {
+    "exclusions": [
+      {
+        "$type": "excludedPath",
+        "isDirectory": true,
+        "path": "/opt/managed/default-exclude",
+        "scopes": ["epp"]
+      }
+    ],
+    "mergePolicy": "admin_only"
+  }
+}

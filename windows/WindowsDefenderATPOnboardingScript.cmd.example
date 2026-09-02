@@ -1,0 +1,3 @@
+@rem Download the Windows onboarding package from the Microsoft Defender portal
+@rem and save it locally as WindowsDefenderATPOnboardingScript.cmd.
+@rem The downloaded tenant-specific package is excluded from Git.

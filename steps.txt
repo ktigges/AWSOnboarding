@@ -1,0 +1,649 @@
+AWS MDE DYNAMIC DEVICE GROUP PILOT STEPS
+
+TOP-LEVEL END-TO-END COMMANDS
+
+Deploy Linux and Windows, building or adopting the Linux AMI first:
+
+  ./e2e-lab.sh --build-ami
+
+Deploy one platform:
+
+  ./e2e-lab.sh --linux-only --build-ami
+  ./e2e-lab.sh --windows-only
+
+Offboard and destroy both platforms while keeping the reusable Linux AMI:
+
+  ./e2e-lab.sh --teardown
+
+Destroy both platforms and remove the Linux AMI and snapshot:
+
+  ./e2e-lab.sh --teardown --delete-ami
+
+Platform-specific teardown:
+
+  ./e2e-lab.sh --teardown --linux-only
+  ./e2e-lab.sh --teardown --windows-only
+
+Only use --skip-offboard when explicitly accepting stale MDE, Intune, and Entra records:
+
+  ./e2e-lab.sh --teardown --skip-offboard
+
+*** The Azure Function remains separate and is never deployed or destroyed by e2e-lab.sh.
+
+LINUX WORKFLOW
+
+Run commands from:
+
+  cd ~/dev/AWSOnboarding
+
+1. INSTALL LOCAL TOOLS
+
+  brew install awscli terraform hashicorp/tap/packer azure-cli azure-functions-core-tools@4
+  brew install --cask session-manager-plugin
+
+Verify:
+
+  aws --version
+  terraform version
+  packer version
+  az version
+  func --version
+  session-manager-plugin
+
+2. LOAD SHARED VARIABLES
+
+Review:
+
+  cat lab.env.file
+  cat linux/lab.env.file
+  cat linux/terraform.tfvars
+  cat working-variables.txt
+
+Load the shared environment when running commands directly:
+
+  source lab.env.file
+
+The root scripts load lab.env.file automatically.
+
+3. AUTHENTICATE AWS
+
+  aws login --profile default
+  aws configure list
+  aws sts get-caller-identity
+
+Expected region:
+
+  us-west-2
+
+4. VERIFY AWS NETWORK
+
+  aws ec2 describe-vpcs \
+    --region us-west-2 \
+    --filters Name=is-default,Values=true \
+    --query 'Vpcs[].{VpcId:VpcId,Cidr:CidrBlock,Default:IsDefault}' \
+    --output table
+
+  aws ec2 describe-subnets \
+    --region us-west-2 \
+    --filters Name=default-for-az,Values=true \
+    --query 'Subnets[].{SubnetId:SubnetId,AZ:AvailabilityZone,Cidr:CidrBlock}' \
+    --output table
+
+5. DOWNLOAD THE MDE ONBOARDING PACKAGE
+
+In the Defender portal:
+
+  Settings
+  Endpoints
+  Device management
+  Onboarding
+  Linux server
+  Local script
+
+Extract this file into the linux directory:
+
+  linux/MicrosoftDefenderATPOnboardingLinuxServer.py
+
+Verify:
+
+  test -s linux/MicrosoftDefenderATPOnboardingLinuxServer.py && echo onboarding-script-present
+
+6. SET DEPLOYMENT VALUES
+
+Edit linux/terraform.tfvars:
+
+  ec2_instance_name     = "mde-linux-lab"
+  mde_device_tag        = "mde-lab-test"
+  derive_mde_device_tag = true
+  mde_device_tag_suffix = "linux-lab"
+
+With derived tagging enabled, the MDE GROUP tag is:
+
+  AWS account ID + hyphen + MdeTagSuffix
+
+Example:
+
+  <aws-account-id>-linux-lab
+
+7. BUILD OR ADOPT THE AMI
+
+  ./linux/1-build-ami.sh
+
+The script:
+
+  Checks AWS authentication and starts browser login when needed
+  Displays the authenticated AWS account
+  Pauses before continuing
+  Creates or verifies the mde-packer-ssm IAM role and instance profile
+  Exports temporary credentials for Packer
+  Builds the un-onboarded Amazon Linux 2023 AMI when none exists
+  Adopts the single existing tagged AMI instead of creating a duplicate
+  Records the AMI and snapshot IDs in linux/.ami-state.env
+
+Verify the AMI:
+
+  source linux/.ami-state.env
+
+  aws ec2 describe-images \
+    --region "$AWS_REGION" \
+    --image-ids "$AMI_ID" \
+    --query 'Images[0].{ImageId:ImageId,Name:Name,State:State,Architecture:Architecture,Root:RootDeviceType}' \
+    --output table
+
+Expected:
+
+  State available
+  Architecture x86_64
+  Root ebs
+
+8. REVIEW THE TERRAFORM PLAN
+
+  ./linux/2-terraform-lab.sh plan
+
+The script checks authentication, displays the account, pauses, loads the AMI, generates the SSH key when enabled, detects the SSH source IPv4 when needed, validates Terraform, and writes tfplan.
+
+Review:
+
+  terraform -chdir=linux show tfplan
+
+Confirm:
+
+  EC2 uses the custom AMI
+  Instance type is t3.small
+  Root volume is 20 GB gp3 and delete-on-termination
+  EC2 Name tag matches ec2_instance_name
+  No EC2 replacement is planned for an in-place update
+  SSH ingress is restricted to one IPv4 /32 when enabled
+
+9. DEPLOY THE LAB
+
+  ./linux/2-terraform-lab.sh apply
+
+The script prints:
+
+  EC2 instance ID
+  S3 onboarding bucket
+  Session Manager command
+  SSH key path and SSH command when SSH is enabled
+  Teardown command
+
+Check status:
+
+  ./linux/2-terraform-lab.sh status
+
+10. CONNECT WITH SESSION MANAGER
+
+  aws ssm start-session \
+    --target "$(terraform -chdir=linux output -raw instance_id)" \
+    --region us-west-2
+
+Inside EC2:
+
+  sudo -i
+
+11. CONNECT WITH SSH WHEN ENABLED
+
+The apply script prints the exact command. Its form is:
+
+  ssh -o StrictHostKeyChecking=accept-new \
+    -i linux/.ssh/mde-linux-lab \
+    ec2-user@PUBLIC_IP
+
+If the administrator public IPv4 changes, rerun:
+
+  ./linux/2-terraform-lab.sh apply
+
+12. VERIFY MDE ONBOARDING AND PROTECTION
+
+Inside EC2:
+
+  mdatp health --field org_id
+  mdatp health --field healthy
+  mdatp health --field real_time_protection_enabled
+  mdatp health --field behavior_monitoring
+  mdatp health --field cloud_enabled
+  mdatp health --field automatic_definition_update_enabled
+  mdatp health --field engine_load_status
+  mdatp health --field definitions_status
+  mdatp health --field edr_device_tags
+
+Expected after definitions initialize:
+
+  org_id is a tenant GUID
+  healthy is true
+  real_time_protection_enabled is true
+  behavior_monitoring is enabled
+  cloud_enabled is true
+  automatic_definition_update_enabled is true
+  engine_load_status is Engine load succeeded
+  edr_device_tags contains the GROUP tag
+
+13. VERIFY THE MANAGED PROFILE AND DIRECTORIES
+
+Inside EC2:
+
+  python3 -m json.tool \
+    /etc/opt/microsoft/mdatp/managed/mdatp_managed.json
+
+  stat -c '%a %U %G %n' \
+    /opt/managed/default-exclude \
+    /opt/managed/policy-exclude1 \
+    /opt/managed/policy-exclude2
+
+  mdatp exclusion list
+
+The local managed profile excludes only:
+
+  /opt/managed/default-exclude
+
+The policy test directories are created but are not locally excluded:
+
+  /opt/managed/policy-exclude1
+  /opt/managed/policy-exclude2
+
+14. ENABLE MDE SECURITY SETTINGS MANAGEMENT
+
+In Defender:
+
+  Settings
+  Endpoints
+  Configuration management
+  Enforcement scope
+  Enable Linux
+  Select All devices for the validation
+
+In Intune:
+
+  Endpoint security
+  Microsoft Defender for Endpoint
+  Allow Microsoft Defender for Endpoint to enforce Endpoint Security Configurations = On
+
+Wait until the Linux device appears in Intune or Entra with management type MicrosoftSense.
+
+15. CREATE THE LOCAL PYTHON ENVIRONMENT
+
+  python3 -m venv .venv
+  source .venv/bin/activate
+
+The gate uses the Python standard library and does not require pip packages.
+
+16. AUTHENTICATE AZURE
+
+The gate wrapper reads AZURE_TENANT_ID from lab.env.file.
+
+  az login --tenant "$AZURE_TENANT_ID"
+  az account show \
+    --query '{Subscription:name,SubscriptionId:id,TenantId:tenantId,User:user.name}' \
+    --output table
+
+17. VERIFY THE MDE SYSTEM TAG AND ENTRA TARGET
+
+Dry run:
+
+  ./2.1-check-aad-device-id.sh
+
+The script:
+
+  Discovers the EC2 hostname from Terraform and AWS
+  Checks AWS and Azure authentication
+  Uses Advanced Hunting DeviceInfo.RegistryDeviceTag for the MDE system tag
+  Matches Entra by AadDeviceId or one unique exact hostname
+  Lists existing extension attributes
+  Displays current and desired extensionAttribute1 values
+  Displays the proposed Microsoft Graph PATCH
+  Makes no write in dry-run mode
+
+18. TEST THE EXTENSION ATTRIBUTE UPDATE
+
+Review the dry-run target carefully, then run:
+
+  ./2.1-check-aad-device-id.sh --apply
+
+The script:
+
+  Updates only extensionAttribute1
+  Requires one unique Entra target
+  Expects HTTP 204 No Content
+  Reads the Entra device again
+  Lists the final extension attributes
+  Verifies extensionAttribute1 matches the MDE system tag
+
+19. APPLY MANAGED PROFILE CHANGES TO AN EXISTING INSTANCE
+
+After changing linux/assets/mdatp_managed.json.tmpl:
+
+  ./linux/2-terraform-lab.sh plan
+  ./linux/2-terraform-lab.sh apply
+
+Terraform uploads the current template to private S3 and updates the State Manager association. Existing MDE onboarding is detected and is not repeated. The mdatp service is restarted to apply the active profile.
+
+20. DOWNLOAD THE MDE OFFBOARDING PACKAGE BEFORE TEARDOWN
+
+In the Defender portal, download the Linux offboarding package and place this file in the linux directory:
+
+  linux/MicrosoftDefenderATPOffboardingLinuxServer.py
+
+Verify:
+
+  test -s linux/MicrosoftDefenderATPOffboardingLinuxServer.py && echo offboarding-script-present
+
+21. DESTROY THE TERRAFORM LAB
+
+  ./linux/2-terraform-lab.sh destroy
+
+The script:
+
+  Checks AWS authentication and pauses
+  Runs the tenant offboarding script through SSM
+  Destroys the EC2 instance
+  Deletes the root EBS volume
+  Removes the public IPv4 assignment
+  Deletes the S3 bucket and versions
+  Removes the Terraform IAM resources
+  Removes the security group and SSM resources
+
+22. DEREGISTER THE AMI AND DELETE THE SNAPSHOT
+
+After Terraform destroy:
+
+  ./linux/3-deregister-ami.sh --confirm
+
+The script:
+
+  Refuses to delete an AMI still used by an EC2 instance
+  Deregisters the MDE AMI
+  Deletes the backing EBS snapshot
+  Deletes the Packer instance profile and IAM role
+  Verifies no tagged AMIs or snapshots remain
+
+23. FINAL COST CHECK
+
+  aws ec2 describe-instances \
+    --region us-west-2 \
+    --filters Name=tag:Name,Values=mde-linux-lab Name=instance-state-name,Values=pending,running,stopping,stopped \
+    --query 'Reservations[].Instances[].InstanceId' \
+    --output text
+
+  aws ec2 describe-images \
+    --region us-west-2 \
+    --owners self \
+    --filters Name=tag:Name,Values=mde-al2023-golden \
+    --query 'Images[].ImageId' \
+    --output text
+
+  aws ec2 describe-snapshots \
+    --region us-west-2 \
+    --owner-ids self \
+    --filters Name=tag:Name,Values=mde-al2023-golden \
+    --query 'Snapshots[].SnapshotId' \
+    --output text
+
+Expected output after full teardown:
+
+  Empty instance result
+  Empty AMI result
+  Empty snapshot result
+
+
+WINDOWS SERVER 2022 WORKFLOW
+
+The Windows workflow is independent from the Linux Terraform state and resources.
+
+24. INSTALL THE WINDOWS DESKTOP CLIENT
+
+Install Windows App from the Mac App Store.
+
+The Windows EC2 instance does not expose TCP 3389. Windows App connects to localhost through an SSM port-forwarding tunnel.
+
+25. DOWNLOAD THE WINDOWS MDE ONBOARDING PACKAGE
+
+In the Defender portal:
+
+  Settings
+  Endpoints
+  Device management
+  Onboarding
+  Windows Server 2019, 2022, and 2025
+  Group Policy
+
+Download and extract the package. Copy this file into the windows directory:
+
+  windows/WindowsDefenderATPOnboardingScript.cmd
+
+Windows Server 2022 already includes Defender Antivirus and the MDE sensor. A separate MDE installer is not required.
+
+26. REVIEW THE WINDOWS VALUES
+
+  cat windows/terraform.tfvars
+
+Defaults:
+
+  Windows Server 2022 Desktop Experience
+  t3.small
+  30 GB encrypted gp3 root volume
+  No inbound security group rules
+  RDP through Session Manager only
+  Derived MDE tag suffix windows-lab
+
+27. REVIEW THE WINDOWS PLAN
+
+  ./windows/windows-lab.sh plan
+
+The script creates a local RSA key used only to decrypt the EC2 Administrator password. Terraform uses a separate state file under windows.
+
+Review:
+
+  terraform -chdir=windows show tfplan
+
+28. DEPLOY AND ONBOARD WINDOWS
+
+  ./windows/windows-lab.sh apply
+
+State Manager:
+
+  Creates C:\Managed\default-exclude
+  Creates C:\Managed\policy-exclude1
+  Creates C:\Managed\policy-exclude2
+  Adds only C:\Managed\default-exclude as a local Defender exclusion
+  Enables local Defender protection settings
+  Writes the MDE Group registry tag
+  Runs the tenant onboarding package when the server is not already onboarded
+  Verifies the Sense and WinDefend services
+  Schedules one reboot for each new tag value so Windows publishes the registry tag immediately
+
+Check AWS and State Manager status:
+
+  ./windows/windows-lab.sh status
+
+29. CONNECT TO THE WINDOWS DESKTOP
+
+  ./windows/windows-rdp.sh
+
+The script prints the Administrator password, opens Windows App when installed, and starts an SSM tunnel.
+
+In Windows App use:
+
+  PC name: localhost:13389
+  User: Administrator
+  Password: value printed by windows-rdp.sh
+
+Keep the terminal running while the desktop session is open.
+
+30. VERIFY WINDOWS MDE CONFIGURATION
+
+Run these commands in an elevated PowerShell window on the server:
+
+  Get-Service Sense, WinDefend
+
+  Get-MpComputerStatus |
+    Select-Object AMServiceEnabled, AntivirusEnabled, BehaviorMonitorEnabled, RealTimeProtectionEnabled
+
+  Get-MpPreference |
+    Select-Object ExclusionPath, MAPSReporting, SubmitSamplesConsent, PUAProtection
+
+  Get-ItemProperty \
+    'HKLM:\SOFTWARE\Policies\Microsoft\Windows Advanced Threat Protection\DeviceTagging' \
+    -Name Group
+
+  Get-ItemProperty \
+    'HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status' \
+    -Name OnboardingState
+
+Expected:
+
+  Sense is running
+  WinDefend is running
+  Real-time and behavior protection are enabled
+  Only C:\Managed\default-exclude is in the local test exclusion list
+  Group contains the derived MDE tag
+  OnboardingState is 1
+
+31. ENABLE WINDOWS SECURITY SETTINGS MANAGEMENT
+
+In Defender:
+
+  Settings
+  Endpoints
+  Configuration management
+  Enforcement scope
+  Enable Windows Server
+
+Use the existing Intune connector setting described in the Linux workflow. Wait until the Windows server has an Entra device record.
+
+32. VERIFY THE WINDOWS TAG AND ENTRA TARGET
+
+Dry run:
+
+  ./windows/windows-check-aad-device-id.sh
+
+Apply extensionAttribute1 after reviewing the unique target:
+
+  ./windows/windows-check-aad-device-id.sh --apply
+
+The wrapper retrieves the Windows computer name through SSM and reuses the same Advanced Hunting and Graph validation as Linux.
+
+33. PREPARE MDE API OFFBOARDING
+
+Windows teardown uses the MDE Offboard Machine API. It does not use the expiring portal offboarding package.
+
+The signed-in Azure identity requires these Defender for Endpoint permissions:
+
+  AdvancedQuery.Read.All
+  Machine.Offboard
+  Machine.ReadWrite
+
+Authenticate to the configured tenant before teardown:
+
+  source lab.env.file
+  az login --tenant "$AZURE_TENANT_ID"
+
+34. DESTROY THE WINDOWS LAB
+
+  ./windows/windows-lab.sh destroy
+
+The script retrieves the Windows computer name through SSM, finds one exact MDE device through Advanced Hunting, calls the MDE offboarding API, removes the uniquely matched Intune and Entra device objects, and then removes all Windows AWS resources.
+
+Directory cleanup requests these delegated Microsoft Graph permissions when needed:
+
+  DeviceManagementManagedDevices.ReadWrite.All
+  Directory.AccessAsUser.All
+
+Microsoft Graph PowerShell handles the interactive consent because Azure CLI cannot request the Intune delegated scope.
+
+If directory cleanup fails, the script warns and asks for approval before continuing AWS destruction. Missing objects are treated as already clean; ambiguous matches are never deleted.
+
+To destroy without offboarding only when explicitly required:
+
+  ./windows/windows-lab.sh destroy --skip-offboard
+
+35. VERIFY WINDOWS CLEANUP
+
+  ./windows/windows-lab.sh status
+
+Expected:
+
+  No Windows Terraform-managed resources exist
+
+
+AZURE FUNCTION TAG SYNCHRONIZATION
+
+The Azure Function stack is independent from both AWS Terraform states. It deploys the shared tag-to-Entra synchronization on a 30-minute timer.
+
+36. REVIEW THE FUNCTION VALUES
+
+  cat azure-function/terraform/terraform.tfvars
+
+Defaults:
+
+  Azure region westus2
+  Linux Consumption plan
+  Python 3.12
+  Timer schedule every 30 minutes
+  System-assigned managed identity
+  Application Insights and Log Analytics
+
+Change the timer in azure-function/terraform/terraform.tfvars using a six-field NCRONTAB expression:
+
+  sync_schedule = "0 */30 * * * *"
+
+Examples:
+
+  Every 15 minutes: "0 */15 * * * *"
+  Every hour: "0 0 * * * *"
+
+The deploying user must be allowed to create Azure resources and assign Microsoft Graph application roles in Entra. The managed identity receives:
+
+  ThreatHunting.Read.All
+  Device.ReadWrite.All
+
+37. REVIEW THE FUNCTION PLAN
+
+  ./azure-function/azure-function-lab.sh plan
+
+The script checks Azure authentication, selects the configured tenant and subscription, validates Terraform, packages the Function source, and writes a plan without changing Azure.
+
+Review:
+
+  terraform -chdir=azure-function/terraform show tfplan
+
+38. DEPLOY THE FUNCTION
+
+  ./azure-function/azure-function-lab.sh apply
+
+Terraform creates the Function App, monitoring resources, storage account, managed identity, and Microsoft Graph app-role assignments. It also deploys the current Function package.
+
+API role assignments can take several minutes to become active.
+
+39. CHECK FUNCTION STATUS
+
+  ./azure-function/azure-function-lab.sh status
+
+The command displays Terraform outputs, Function App state, managed identity, and discovered timer functions.
+
+Use Application Insights in the emitted resource group to inspect timer execution and synchronization logs.
+
+40. DESTROY THE FUNCTION
+
+  ./azure-function/azure-function-lab.sh destroy
+
+Terraform removes the Azure resources and both managed-identity app-role assignments.

@@ -1,0 +1,12 @@
+WORKING VARIABLES
+
+Copy this file to working-variables.txt for local validation notes.
+Do not add account IDs, subscription IDs, tenant IDs, resource IDs, credentials, private keys, public IP addresses, usernames, or generated resource names to Git.
+
+AWS profile: default
+AWS region: us-west-2
+Linux instance name: mde-linux-lab
+Windows instance name: mde-windows-lab
+Linux tag suffix: linux-lab
+Windows tag suffix: windows-lab
+Azure Function region: westus2

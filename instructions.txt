@@ -1,0 +1,62 @@
+AWS MDE DYNAMIC DEVICE GROUP PILOT
+
+Author: Kevin Tigges
+
+PILOT PURPOSE
+
+This pilot tests whether AWS EC2 Linux and Windows Server instances can be assigned to an Entra dynamic device group.
+The assignment uses an MDE system tag. The tag is copied to an Entra device extension attribute.
+
+WHY THIS IS BEING TESTED
+
+AWS devices do not always provide the same native grouping attributes as Azure-hosted devices.
+This pilot tests a consistent way to classify EC2 devices across operating systems for policy and group-based management.
+
+WHAT THE PILOT TESTS
+
+1. Deploy an AWS EC2 Linux or Windows Server instance.
+2. Apply the local MDE configuration and exclusions.
+3. Assign an MDE system tag.
+4. Onboard the instance to MDE automatically.
+5. Register the device in Entra through MDE Security Settings Management.
+6. Read the system tag from Microsoft Graph Advanced Hunting.
+7. Match one Entra device by device ID or exact host name.
+8. Copy the tag to an Entra extension attribute through Microsoft Graph.
+9. Use the attribute for dynamic device group membership.
+
+PLATFORM APPROACH
+
+Linux uses an Amazon Linux image with MDE installed before deployment. State Manager applies the configuration and onboarding.
+
+Windows uses the latest AWS Windows Server 2022 Desktop Experience image. Defender Antivirus and the MDE sensor are built in.
+State Manager applies the tag, local protection settings, exclusions, and the tenant onboarding package.
+
+The Windows server has no inbound security group rules. Desktop access uses RDP through an AWS Session Manager tunnel.
+Azure Arc and the MDE Windows extension are not required for this pilot.
+
+PROJECT LAYOUT
+
+Linux deployment files, tenant packages, local state, and platform settings are under linux.
+Windows deployment files, tenant packages, local state, and platform settings are under windows.
+Shared API automation, environment values, and documentation remain at the project root.
+
+TESTED WITH
+
+  Amazon Linux 2023
+  Windows Server 2022
+  AWS EC2
+  AWS Systems Manager
+  AWS State Manager
+  Microsoft Defender for Endpoint
+  MDE Security Settings Management
+  Microsoft Entra ID
+  Microsoft Graph
+  Microsoft Graph Advanced Hunting
+  Packer
+  Terraform
+
+EXPECTED RESULT
+
+Each EC2 device receives an MDE system tag during deployment. The same value is written to its Entra device extension attribute.
+An Entra dynamic group can then use the attribute as its membership condition for both Linux and Windows devices.
+

@@ -1,0 +1,9 @@
+subscription_id = "<azure-subscription-id>"
+tenant_id       = "<entra-tenant-id>"
+location        = "westus2"
+resource_prefix = "mde-tag-sync"
+sync_schedule   = "0 */30 * * * *"
+allowed_device_tags = [
+  "<aws-account-id>-linux-lab",
+  "<aws-account-id>-windows-lab",
+]

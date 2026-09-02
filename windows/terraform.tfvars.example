@@ -1,0 +1,6 @@
+aws_region            = "us-west-2"
+ec2_instance_name     = "mde-windows-lab"
+instance_type         = "t3.small"
+mde_device_tag        = "mde-windows-lab-test"
+derive_mde_device_tag = true
+mde_device_tag_suffix = "windows-lab"

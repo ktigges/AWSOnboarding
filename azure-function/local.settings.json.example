@@ -1,0 +1,9 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "MDE_TAG_SYNC_SCHEDULE": "0 */30 * * * *",
+    "MDE_ALLOWED_DEVICE_TAGS": "<aws-account-id>-linux-lab,<aws-account-id>-windows-lab"
+  }
+}
